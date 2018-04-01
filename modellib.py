@@ -333,7 +333,7 @@ def compute_rpn_loss(rpn_logits,rpn_boxes,gt_labels,gt_boxes):
     # 非boxes部分不计算损失,所以要multiply with labels
     rpn_boxes_with_gt = tf.multiply(rpn_boxes,gt_labels)
     l2 = tf.losses.mean_squared_error(labels=gt_boxes,predictions = rpn_boxes_with_gt)
-    return l1 + l2
+    return {'rpn_class_loss':l1,'rpn_box_loss':l2}
 
 
 # # Todo compute mask loss with boxes,only mask in a box should be computed
@@ -383,18 +383,18 @@ def compute_mask_loss(pd_masks,boxes,gt_maskes):
     return l
 
 
-def compute_bbox_class_loss(bboxes,gt_maskes):
+def compute_bbox_class_loss(boxes,gt_masks):
     return 0
 
 
-def compute_bbox_regression_loss(bboxes,gt_maskes):
+def compute_bbox_regression_loss(boxes,gt_masks):
     return 0
 
-def compute_mask_rcnn_loss(boxes_class_logits,bboxes,maskes,gt_maskes):
-    l1 = compute_bbox_class_loss(boxes_class_logits,gt_maskes)
-    l2 = compute_bbox_regression_loss(bboxes,gt_maskes)
-    l3 = compute_mask_loss(maskes,bboxes,gt_maskes)
-    return l1,l2,l3
+def compute_mask_rcnn_loss(boxes_class_logits,boxes,masks,gt_masks):
+    l1 = compute_bbox_class_loss(boxes_class_logits,gt_masks)
+    l2 = compute_bbox_regression_loss(boxes,gt_masks)
+    l3 = compute_mask_loss(masks,boxes,gt_masks)
+    return {'mask_class_loss':l1,'mask_box_loss':l2,'mask_loss':l3}
 
 
 
@@ -420,10 +420,13 @@ class MaskRcnn(object):
     @property
     def head_variables(self):
         return self.boxes_layer.trainable_variables+self.mask_layer.trainable_variables
+    @property
+    def image_net_variables(self):
+        return self.backbone.trainable_variables
 
     @property
     def trainable_variables(self):
-        return self.rpn_variables()+self.head_variables()
+        return self.rpn_variables+self.head_variables
 
 
 
