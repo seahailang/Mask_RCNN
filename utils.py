@@ -145,15 +145,20 @@ def non_max_suppression(boxes, scores, threshold):
         ixs = np.delete(ixs, 0)
     return np.array(pick, dtype=np.int32)
 
+
+
 # Todo change boxes to anchors label and anchor position
-def boxes2anchor(image_shape,strides,anchor_size,anchor_ratio,boxes):
+def boxes2anchor(image_shape,strides,anchor_size,anchor_ratio,
+                 boxes,masks,target_size,mask_labels=None,num_class=2):
     # Done
-    h,w = image_shape
+    w,h = image_shape
     box_center_y = (boxes[:,0]+boxes[:,2])/2
     box_center_x = (boxes[:,1]+boxes[:,3])/2
     box_h = (boxes[:,2]-boxes[:,0])
     box_w = (boxes[:,1]-boxes[:,3])
-    box_ratio = box_h/box_w
+    box_ratio = box_h/(box_w+1e-12)
+    # 长宽归一化
+    raw_boxes = np.array(boxes)
     boxes[:,0] = boxes[:,0]/h
     boxes[:,2] = boxes[:,2]/h
     boxes[:,1] = boxes[:,1]/w
@@ -162,10 +167,21 @@ def boxes2anchor(image_shape,strides,anchor_size,anchor_ratio,boxes):
     num_anchors = len(anchor_size)*3
     feature_maps_shape = (int(math.ceil(h/strides)),int(math.ceil(w/strides)))
     anchors_position = np.zeros(shape=feature_maps_shape+(num_anchors,4))
-    anchors_label = np.zeros(shape=feature_maps_shape+(num_anchors,))
+    anchors_label = np.zeros(shape=feature_maps_shape+(num_anchors,1))
+    anchors_mask = np.zeros(shape=feature_maps_shape+(num_anchors,)+target_size)
+    anchors_class_label =  np.zeros(shape=feature_maps_shape+(num_anchors,num_class))
+    if mask_labels == None:
+        mask_labels = np.ones(shape = np.shape(masks)[-1],dtype=np.int32)
     for i in range(len(boxes)):
-        a = round(box_center_x[i]/strides)
-        b = round(box_center_y[i]/strides)
+        y1,x1,y2,x2 = raw_boxes[i]
+        if y2==0 or x2==0:
+            continue
+        mask = masks[y1:y2,x1:x2,i]
+
+        mask = scipy.misc.imresize(mask,target_size,interp='nearest',mode='L')
+
+        a = int(round(box_center_x[i]/strides))-1
+        b = int(round(box_center_y[i]/strides))-1
         j = 0
         for ratio in anchor_ratio:
             if box_ratio[i]>ratio:
@@ -175,8 +191,11 @@ def boxes2anchor(image_shape,strides,anchor_size,anchor_ratio,boxes):
             if box_w[i]>s:
                 k+=1
         anchors_label[a,b,j*len(anchor_size)+k] = 1
-        anchors_position[a,b,j*len(anchor_size)+k,:]=boxes[i,:]
-    return anchors_label,anchors_position
+        anchors_position[a,b,j*len(anchor_size)+k]=boxes[i,:]
+        anchors_mask[a,b,j*len(anchor_size)+k] = mask
+        anchors_class_label[a, b, j * len(anchor_size) + k,mask_labels[i]] = 1
+    return anchors_label.astype(np.float32),anchors_position.astype(np.float32),\
+           anchors_class_label.astype(np.float32),anchors_mask.astype(np.float32)
 
 
 def apply_box_deltas(boxes, deltas):
