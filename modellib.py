@@ -193,7 +193,7 @@ class RPN(object):
                                             activation=None)
         self.rpn_bbox_layers = tf.layers.Conv2D(4*anchor_per_position,
                                                 kernel_size = (1,1),
-                                                activation=None)
+                                                activation=tf.nn.sigmoid)
     def __call__(self,X):
         shared = self.layer(X)
         rpn_logits = self.rpn_class_layers(shared)
@@ -203,7 +203,7 @@ class RPN(object):
         rpn_bbox_logits = tf.reshape(rpn_bbox_logits,tuple(rpn_prob.shape)+(4,))
         return rpn_logits,rpn_prob,rpn_bbox_logits
 
-    def create_boxes(self,rpn_prob,rpn_bbox_logits,neg_ratio=0.6):
+    def create_boxes(self,rpn_prob,rpn_bbox_logits,neg_ratio=0.6,rpn_confidence=0.5):
         '''
         neg_ratio = max_instance/(positive_ration*feature_map_pixels*num_anchor_per_pixel_
         :param rpn_prob:
@@ -219,8 +219,8 @@ class RPN(object):
         for i in range(3):
             idx = tf.expand_dims(idx,-1)
         idx = tf.tile(idx,[1,w,h,d])
-        target_mask = tf.greater(rpn_prob,0.5)
-        all_mask = tf.greater(tf.random_uniform(shape=rpn_prob.shape,minval=0,maxval=1),neg_ratio)
+        target_mask = tf.greater(rpn_prob,rpn_confidence)
+        all_mask = tf.less(tf.random_uniform(shape=rpn_prob.shape,minval=0,maxval=1),neg_ratio)
 
         boxes_mask = tf.logical_or(target_mask,all_mask)
 
@@ -280,7 +280,8 @@ class MaskBboxBranch(object):
                                             strides=(1,1),
                                             activation=tf.nn.relu))
         self.bbox_layer = tf.layers.Conv2D(filters=4,
-                                            kernel_size=(1,1))
+                                            kernel_size=(1,1),
+                                            activation=tf.nn.sigmoid)
         self.mask_class_layer = tf.layers.Conv2D(filters=num_class,
                                                  kernel_size=(1,1),
                                                  activation=None)
@@ -293,7 +294,7 @@ class MaskBboxBranch(object):
         bbox = tf.squeeze(bbox,axis=[1,2])
         mask_class_logits = self.mask_class_layer(x)
         mask_class_logits = tf.squeeze(mask_class_logits,axis=[1,2])
-        mask_prob = tf.nn.softmax(mask_class_logits,axis=-1)
+        mask_prob = tf.nn.softmax(mask_class_logits,dim=-1)
         return mask_class_logits,mask_prob,bbox
 
     @property
@@ -335,7 +336,7 @@ class MaskLayer(object):
                                             kernel_size=(3, 3),
                                             strides=(1, 1),
                                             padding='same',
-                                            activation=tf.nn.relu))
+                                            activation=tf.nn.sigmoid))
     def __call__(self,feature_maps):
         assert len(feature_maps)==len(self.strides)
         # l = len(self.strides)
@@ -351,7 +352,8 @@ class MaskLayer(object):
     def create_box_masks(self,X,boxes_prob,boxes_position,box_ids,target_size=(32,32)):
         boxes_class = tf.argmax(boxes_prob,axis=-1)
         target_mask = tf.not_equal(boxes_class,0)
-        boxes = tf.boolean_mask(boxes_position,target_mask)
+        boxes = tf.stop_gradient(boxes_position)
+        boxes = tf.boolean_mask(boxes,target_mask)
         box_ids = tf.boolean_mask(box_ids,target_mask)
         masks = tf.image.crop_and_resize(X,boxes=boxes,box_ind=box_ids,crop_size=target_size)
         return masks,target_mask
@@ -364,15 +366,45 @@ class MaskLayer(object):
             variables.append(self.layers[i].trainable_variables)
         return variables
 
+# def box_loss(boxes1,boxes2):
+# 	centers_x1 = boxes1[:,1]+boxes1[:,3]
+# 	centers_y1 = boxes1[:,0]+boxes1[:,2]
+# 	centers_x2 = boxes2[:,1]+boxes2[:,3]
+# 	centers_y2 = boxes2[:,0]+boxes2[:,2]
+# 	l1 = tf.losses.mean_squared_error(centers_x1,centers_x2)+tf.losses.mean_squared_error(centers_y1,centers_y2)
+# 	w1 = tf.log(boxes1[:,3]-boxes1[:,1]+1e-12)
+# 	h1 = tf.log(boxes1[:,2]-boxes1[:,0]+1e-12)
+# 	w2 = tf.log(boxes2[:,3]-boxes2[:,1]+1e-12)
+# 	h2 = tf.log(boxes2[:,2]-boxes2[:,0]+1e-12)
+# 	l2 = tf.losses.mean_squared_error(w1,w2)+tf.losses.mean_squared_error(h1,h2)
+# 	return l1+l2
 
-def compute_rpn_loss(rpn_logits,rpn_boxes,gt_labels,gt_boxes):
 
 
-    # 非boxes部分不计算损失,所以要multiply with labels
-    rpn_boxes_with_gt = tf.multiply(rpn_boxes,gt_labels)
-    gt_labels = tf.squeeze(gt_labels,-1)
+
+def compute_rpn_loss(rpn_logits,rpn_boxes,gt_labels,gt_boxes,neg_ratio):
+
+    gt_labels = tf.squeeze(gt_labels, -1)
+    label_mask = tf.greater(gt_labels, 0.7)
+
+
+    neg_label_mask = tf.less(tf.random_uniform(gt_labels.shape), neg_ratio)
+
+    # 需要取出一定全部的含mask的box和一部分不含的box计算 label loss
+    gt_boxes = tf.boolean_mask(gt_boxes,label_mask)
+
+
+    rpn_boxes = tf.boolean_mask(rpn_boxes,label_mask)
+
+
+    all_mask = tf.logical_or(label_mask,neg_label_mask)
+    gt_labels = tf.boolean_mask(gt_labels,all_mask)
+    rpn_logits = tf.boolean_mask(rpn_logits,all_mask)
+
+
     l1 = tf.losses.log_loss(labels=gt_labels, predictions=rpn_logits)
-    l2 = tf.losses.mean_squared_error(labels=gt_boxes,predictions = rpn_boxes_with_gt)
+    l2 = tf.losses.mean_squared_error(labels=gt_boxes,predictions = rpn_boxes)
+    # l2 = box_loss(gt_boxes,rpn_boxes_with_gt)
     return {'rpn_class_loss':l1,'rpn_box_loss':l2}
 
 
@@ -434,7 +466,8 @@ class MaskRcnn(object):
                  boxes_layer=MaskBboxBranch(),
                  mask_layer=MaskLayer(),
                  target_size=(32,32),
-                 neg_ratio = 0.01
+                 neg_ratio = 0.01,
+                 rpn_confidence = 0.5
                  ):
         self.backbone = backbone
         self.roi_layer = roi_layer
@@ -443,25 +476,29 @@ class MaskRcnn(object):
         self.mask_layer = mask_layer
         self.target_size=target_size
         self.neg_ratio = neg_ratio
+        self.rpn_confidence = rpn_confidence
     def inference(self,images):
         feature_maps,X = self.backbone(images)
 
         box_logits,box_probs,box_positions = self.rpn_layer(X)
 
-        boxes,box_ids,boxes_bool_mask = self.rpn_layer.create_boxes(box_probs,box_positions,neg_ratio=self.neg_ratio)
+        boxes,box_ids,boxes_bool_mask = self.rpn_layer.create_boxes(box_probs,box_positions,
+                                                                    neg_ratio=self.neg_ratio,
+                                                                    rpn_confidence = self.rpn_confidence)
 
         rois = self.roi_layer(feature_maps,bboxes=boxes,box_ids=box_ids)
 
         mask_class_logits, mask_prob, bbox = self.boxes_layer(rois)
 
         mask = self.mask_layer(feature_maps)
+        tf.summary.image('mask',mask)
         mask,masks_bool_mask = self.mask_layer.create_box_masks(mask,
                                                           boxes_prob=mask_prob,
                                                           boxes_position=boxes,
                                                           box_ids=box_ids,
                                                           target_size=self.target_size)
         mask = tf.squeeze(mask,-1)
-        bbox = tf.boolean_mask(bbox,masks_bool_mask)
+        bbox = tf.boolean_mask(boxes,masks_bool_mask)
 
         return box_logits,box_probs,box_positions,\
                boxes_bool_mask,mask_class_logits,\

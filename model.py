@@ -37,7 +37,9 @@ class Model(object):
         self.mask_rcnn = modellib.MaskRcnn(backbone,rpn_layer,roi_layer,
                                            boxes_layer,mask_layer,
                                            target_size=config.target_size,
-                                           neg_ratio = config.neg_ratio)
+                                           neg_ratio = config.neg_ratio,
+                                           rpn_confidence = config.rpn_confidence)
+        self.neg_ratio = config.neg_ratio
         self.mode = config.mode
         self.learning_rate = config.learning_rate
         self.decay_steps = config.decay_steps
@@ -71,7 +73,11 @@ class Model(object):
         self.all_variables = self.mask_rcnn.trainable_variables
         self.image_net_variables = self.mask_rcnn.image_net_variables
         if self.mode == 'train':
-            self.rpn_loss = modellib.compute_rpn_loss(box_logits,box_positions,self.gt_anchors,self.gt_boxes)
+            self.rpn_loss = modellib.compute_rpn_loss(box_probs,
+                                                      box_positions,
+                                                      self.gt_anchors,
+                                                      self.gt_boxes,
+                                                      neg_ratio=self.neg_ratio)
             gt_masks = self.mask_rcnn.create_gt_mask(self.gt_masks,boxes_bool_mask,masks_bool_mask)
             gt_boxes = self.mask_rcnn.create_gt_mask(self.gt_boxes,boxes_bool_mask,masks_bool_mask)
             gt_labels = tf.boolean_mask(self.gt_labels,boxes_bool_mask)
@@ -162,7 +168,7 @@ def train(config,train_dataset,val_dataset):
     opt = model.optimizer()
     rpn_op = model.train_rpn(opt,loss_rpn)
     head_op = model.train_head(opt,loss_mask)
-    all_op = model.train_all(opt,loss_mask)
+    all_op = model.train_all(opt,loss_mask+loss_mask)
 
     global_step = tf.train.get_or_create_global_step()
 
@@ -191,7 +197,7 @@ def train(config,train_dataset,val_dataset):
 
             sess.run([rpn_loss,loss_rpn,rpn_op],
                      feed_dict={iter_placeholder:train_handel})
-            if step%10 == 0:
+            if step%100 == 0:
                 rpn_l,l_rpn,summary_str=sess.run([rpn_loss,loss_rpn,summary_op],
                                                        feed_dict={iter_placeholder:val_handel})
 
@@ -201,11 +207,12 @@ def train(config,train_dataset,val_dataset):
                            config.ckpt_dir+'rpn',
                            global_step=global_step,
                            latest_filename='rpn')
+                print(rpn_l)
 
         for step in range(config.head_steps):
             sess.run([mask_loss, loss_mask, head_op],
                      feed_dict={iter_placeholder: train_handel})
-            if step % 10 == 0:
+            if step % 100 == 0:
                 mask_l, l_mask, summary_str = sess.run([mask_loss, loss_mask, summary_op],
                                                            feed_dict={iter_placeholder: val_handel})
 
@@ -215,12 +222,13 @@ def train(config,train_dataset,val_dataset):
                            config.ckpt_dir+'mask',
                            global_step=global_step,
                            latest_filename='mask_rcnn')
+                print(mask_l)
 
         for step in range(config.all_steps):
             sess.run([mask_loss, loss_mask, all_op],
                      feed_dict={iter_placeholder: train_handel})
-            if step % 10 == 0:
-                mask_l, l_mask, summary_str = sess.run([mask_loss, loss_mask, summary_op],
+            if step % 100 == 0:
+                rpn_l,mask_l, l_mask, summary_str = sess.run([rpn_loss,mask_loss, loss_mask, summary_op],
                                                            feed_dict={iter_placeholder: val_handel})
 
                 writer.add_summary(summary_str)

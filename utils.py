@@ -192,7 +192,7 @@ def boxes2anchor(image_shape,strides,anchor_size,anchor_ratio,
                 k+=1
         anchors_label[a,b,j*len(anchor_size)+k] = 1
         anchors_position[a,b,j*len(anchor_size)+k]=boxes[i,:]
-        anchors_mask[a,b,j*len(anchor_size)+k] = mask
+        anchors_mask[a,b,j*len(anchor_size)+k] = mask>0
         anchors_class_label[a, b, j * len(anchor_size) + k,mask_labels[i]] = 1
     return anchors_label.astype(np.float32),anchors_position.astype(np.float32),\
            anchors_class_label.astype(np.float32),anchors_mask.astype(np.float32)

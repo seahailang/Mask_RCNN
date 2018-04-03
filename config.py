@@ -50,10 +50,12 @@ class Config(object):
         self.enter_flow_filters = (32,64,182)
         self.middle_flow_filters = 728
         assert self.enter_flow_filters[-1]==self.middle_flow_filters/4,'channel should be match'
-        self.middle_flow_blocks = 4
+        self.middle_flow_blocks = 16
 
         self.anchor_size = (4,8,16,32,64)
         self.anchor_ratio = (0.5,1,2)
+
+        self.rpn_confidence = 0.7
 
         self.num_class = 1+1
         self.max_instance = 500
@@ -66,7 +68,7 @@ class Config(object):
 
         # data_dir
         # confirm your data dir
-        self.data_dir = 'E:/DSB/'
+        self.data_dir = '/data1/zhaozhonghua/data/DSB/'
         self.train_dir = self.data_dir+'stage1_train/'
         self.test_dir = self.data_dir +'stage1_test/'
         self.ckpt_dir = self.data_dir+'ckpt/'

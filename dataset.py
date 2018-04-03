@@ -118,8 +118,8 @@ def process_test(image_id):
 def build_train_dataset(image_ids):
 
     dataset = tf.data.Dataset.from_tensor_slices(image_ids)
-    dataset = dataset.shuffle(buffer_size=1000)
-    dataset = dataset.map(process_train)
+    dataset = dataset.shuffle(buffer_size=1000).repeat()
+    dataset = dataset.map(process_train,num_parallel_calls=16)
     # dataset = dataset.map(find_shape).batch(2)
     dataset = dataset.batch(CONFIG.batch_size)
     return dataset
